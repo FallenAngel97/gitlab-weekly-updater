@@ -1,7 +1,9 @@
-FROM node:22-alpine as build
+FROM rust:1.86-alpine AS builder
 WORKDIR /app
-ADD . .
-RUN yarn
-FROM scratch as base
-COPY --from=build . .
-CMD ["node", "/app/script.js"]
+COPY . .
+RUN apk add g++ libressl-dev && cargo build --release
+
+FROM scratch
+COPY --from=builder /app/target/release/gitlab_pipeline .
+ENV DOCKER=true
+ENTRYPOINT ["/gitlab_pipeline"]
