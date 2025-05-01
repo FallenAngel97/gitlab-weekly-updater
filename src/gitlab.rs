@@ -21,13 +21,21 @@ const DEFAULT_BRANCH: &str = "master";
 pub struct Commit {
     pub id: String,
     pub committed_date: DateTime<Utc>,
+    pub message: String,
 }
 
-impl Commit {
-    pub fn is_recent(&self, weeks: i64) -> bool {
-        Utc::now() - self.committed_date < Duration::weeks(weeks)
-    }
+#[derive(Debug, Deserialize)]
+struct Tag {
+    name: String,
+    commit: CommitRef,
 }
+
+#[derive(Debug, Deserialize)]
+struct CommitRef {
+    id: String,
+}
+
+impl Commit {}
 
 #[derive(Debug, Deserialize)]
 struct PipelineResponse {
@@ -44,7 +52,6 @@ pub struct GitLab {
     token: String,
     branch: String,
     headers: HeaderMap,
-    pub commit_age_weeks: i64,
 }
 
 impl GitLab {
@@ -66,8 +73,57 @@ impl GitLab {
             token,
             branch,
             headers,
-            commit_age_weeks: 2,
         })
+    }
+
+    fn parse_version(tag: &str) -> Result<(u64, u64)> {
+        let cleaned = tag.trim_start_matches('v');
+        let parts: Vec<&str> = cleaned.split('.').collect();
+        if parts.len() != 2 {
+            anyhow::bail!("Invalid tag format (expected vMAJOR.MINOR): {}", tag);
+        }
+        Ok((parts[0].parse()?, parts[1].parse()?))
+    }
+
+    pub fn intermediate_commits(&self, from: &str, to: &str) -> Result<Vec<Commit>> {
+        let url = format!(
+            "{}/projects/{}/repository/compare?from={}&to={}",
+            GITLAB_API_URL,
+            urlencoding::encode(&self.project_id),
+            from,
+            to
+        );
+
+        let response = CLIENT
+            .get(&url)
+            .headers(self.headers.clone())
+            .send()?;
+
+        let body = response.text()?;
+
+        let parsed: serde_json::Value = serde_json::from_str(&body)?;
+        let commits_json = parsed
+            .get("commits")
+            .ok_or_else(|| anyhow::anyhow!("Missing 'commits' in compare response"))?;
+
+        let commits: Vec<Commit> = serde_json::from_value(commits_json.clone())?;
+        Ok(commits)
+    }
+
+    pub fn current_tag_commit_id(&self) -> Result<Option<String>> {
+        let url = format!("{}/projects/{}/repository/tags", GITLAB_API_URL, self.project_id);
+        let tags: Vec<Tag> = CLIENT
+            .get(&url)
+            .headers(self.headers.clone())
+            .send()?
+            .json()?;
+
+        let latest_tag = tags
+            .iter()
+            .find_map(|tag| Self::parse_version(&tag.name).ok().map(|v| (v, tag)))
+            .map(|(_, tag)| tag.commit.id.clone());
+
+        Ok(latest_tag)
     }
 
     fn is_running_in_docker() -> bool {
