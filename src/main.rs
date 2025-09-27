@@ -6,6 +6,7 @@ use anyhow::Result;
 fn is_meaningful_commit(commit: &Commit) -> bool {
     let msg = commit.message.to_lowercase();
     !msg.contains("update dependency gradle to")
+        && !msg.contains("bump versionCode to")
         && !msg.contains("update dependency com.android.tools.build:gradle to")
 }
 
